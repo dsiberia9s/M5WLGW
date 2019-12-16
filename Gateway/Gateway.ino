@@ -1,5 +1,4 @@
 #include <M5Stack.h>
-#include <SPI.h>
 #include <LoRa.h>
 #include "WiFi.h"
 #include "AsyncUDP.h"
@@ -8,37 +7,40 @@
 #define LORA_DEFAULT_RESET_PIN 36
 #define LORA_DEFAULT_DIO0_PIN  26
 
-char gateway_name[] = {'G', 'W', '0', '1'};
 uint16_t first_port = 48654;
 uint16_t last_port = 48718;
+unsigned long interval = 5000;
+char gateway_name[4];
 uint16_t * clients;
+unsigned long last = 0;
 AsyncUDP * udps;
 
-unsigned long last = 0;
-unsigned long interval = 5000;
+typedef void (*pFunc2UInt8_t)(uint8_t, uint8_t);
 
 void wifi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin("", "");
   if (WiFi.waitForConnectResult() != WL_CONNECTED) {
-    M5.Lcd.println("Wi-Fi Failed");
+    Serial.println("Wi-Fi Failed");
     while (1);
   }
-  M5.Lcd.print("Local IP: ");
-  M5.Lcd.println(WiFi.localIP());
+  Serial.println("Wi-Fi OK");
 }
 
 void lora() {
   LoRa.setPins(LORA_DEFAULT_SS_PIN, LORA_DEFAULT_RESET_PIN, LORA_DEFAULT_DIO0_PIN);
   if (!LoRa.begin(433E6)) {
-    M5.Lcd.println("Starting LoRa failed!");
+    Serial.println("LoRa Failed");
     while (1);
   }
   LoRa.enableCrc();
-  M5.Lcd.println("LoRa init succeeded.");
+  Serial.println("LoRa OK");
 }
 
 void preferences() {
+  for (int i = 0; i < sizeof(gateway_name) / sizeof(char); i++) {
+    gateway_name[i] = (char)random(0, 256);
+  }
   uint16_t s = last_port - first_port;    
   clients = (uint16_t *) malloc(sizeof(uint16_t) * s);
   for (int i = 0; i < s; i++) {
@@ -61,7 +63,7 @@ bool forign() {
   return false;
 }
 
-void a1() {
+void a1(pFunc2UInt8_t callcack) {
   if (millis() - last >= interval) {
     while (LoRa.beginPacket() == 0) {
       delay(100);
@@ -77,16 +79,15 @@ void a1() {
     LoRa.write(last_port & 0xFF);
     LoRa.endPacket(true);
     last = millis();
-    M5.Lcd.print("*");
+    (*callcack)(0xA1, 0);
   }
 }
 
-void a2() {
+void a2(pFunc2UInt8_t callcack) {
   if (forign()) {
     return;
   }
   uint16_t port = (LoRa.read() << 8) | LoRa.read();
-  M5.Lcd.print(port);
   for (int i = 0; i < (last_port - first_port); i++) {
     if (port == clients[i]) {
       while (LoRa.beginPacket() == 0) {
@@ -101,8 +102,8 @@ void a2() {
       LoRa.write(port & 0xFF);
       LoRa.write(0x00);
       LoRa.endPacket(true);
-      M5.Lcd.print("port busy");
-      return; 
+      (*callcack)(0xA2, 0x00);
+      return;
     }
   }
   for (int i = 0; i < (last_port - first_port); i++) {
@@ -121,13 +122,13 @@ void a2() {
       LoRa.write(port & 0xFF);
       LoRa.write(0xFF);
       LoRa.endPacket(true);
-      M5.Lcd.print("port allowed");
+      (*callcack)(0xA2, 0xFF);
       return;
     }
   }
 }
 
-void udp_out() {
+void c1(pFunc2UInt8_t callcack) {
   if (forign()) {
     return;
   }
@@ -140,7 +141,6 @@ void udp_out() {
   for (int i = 0; i < 4; i++) {
     LoRa.read();
   }
-  //localIP_ = WiFi.localIP();
   localPort_ = (LoRa.read() << 8) | LoRa.read();
   uint16_t length_ = (LoRa.read() << 8) | LoRa.read();
   uint8_t * data_ = (uint8_t*)malloc(sizeof(uint8_t) * length_);
@@ -150,21 +150,18 @@ void udp_out() {
   for (int i = 0; i < (last_port - first_port); i++) {
     if (clients[i] == localPort_) {
       udps[i].writeTo(data_, length_, remoteIP_, remotePort_);
-      M5.Lcd.print("LoRa -> Wi-Fi: ");
-      M5.Lcd.print(remoteIP_);
-      M5.Lcd.print(": ");
-      M5.Lcd.print(remotePort_);
+      (*callcack)(0xC1, 0);
       break;
     }
   }
   delay(5);
 }
 
-void a3() {
+void a3(pFunc2UInt8_t callcack) {
   for (int i = 0; i < (last_port - first_port); i++) {
     if (clients[i]) {
       if (udps[i].connected()) {
-        udps[i].onPacket([](AsyncUDPPacket packet) {
+        udps[i].onPacket([callcack](AsyncUDPPacket packet) {
           while (LoRa.beginPacket() == 0) {
             delay(100);
           }
@@ -190,7 +187,7 @@ void a3() {
             LoRa.write(packet.data()[j]);
           }
           LoRa.endPacket(true);
-          M5.Lcd.print("@");
+          (*callcack)(0xA3, 0);
         });
       }
       delay(5);
@@ -198,21 +195,44 @@ void a3() {
   }
 }
 
-void gateway() {
+void gateway(pFunc2UInt8_t callcack) {
   if (LoRa.parsePacket()) {
     if (LoRa.available()) {
       switch (LoRa.read()) {
         case 0xB1:
-          a2();
+          a2(callcack);
           break;
         case 0xB2:
-          udp_out();
+          c1(callcack);
           break;
       }
     }
   }
-  a1();
-  a3();
+  a1(callcack);
+  a3(callcack);
+}
+
+void callback(uint8_t key, uint8_t value) {
+  switch (key) {
+    case 0xA1:
+      M5.Lcd.print("*");
+      break;
+    case 0xA2:
+      {
+        if (value) {
+          M5.Lcd.print("(V)");
+        } else {
+          M5.Lcd.print("(X)");  
+        }
+      }
+      break;
+    case 0xA3:
+      M5.Lcd.print("(C<-G)");
+      break;
+    case 0xC1:
+      M5.Lcd.print("(N<-G)");
+      break;
+  }
 }
 
 void setup() {
@@ -223,5 +243,5 @@ void setup() {
 }
 
 void loop() {
-  gateway();
+  gateway(callback);
 }

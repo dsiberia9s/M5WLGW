@@ -12,6 +12,7 @@
 | [  клиент  ] | <— согласие или отказ — | [  шлюз  ] | **0xA2** |
 | [  клиент  ] |     — UPD-пакет —>      | [  шлюз  ] | **0xB2** |
 | [  клиент  ] |     <— UPD-пакет —      | [  шлюз  ] | **0xA3** |
+|   [ сеть ]   |     <— UPD-пакет —      |  [ шлюз ]  | **0xC1** |
 
 **[English]**
 
@@ -25,6 +26,7 @@ Table 1
 | [  client  ] | <— OK or decline — | [  gateway  ] | **0xA2** |
 | [  client  ] |  — UPD-packet —>   | [  gateway  ] | **0xB2** |
 | [  client  ] |  <— UPD-packet —   | [  gateway  ] | **0xA3** |
+| [ network ]  |  <— UPD-packet —   | [  gateway  ] | **0xC1** |
 
 
 
